@@ -1,0 +1,56 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    # 每6小时同步一次上游 main（避开整点降低并发）
+    - cron: '17 */6 * * *'
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync from upstream
+        run: |
+          git remote add upstream https://github.com/openclaw/openclaw.git
+          git fetch upstream main
+
+          # 检查是否有新提交
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
+
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "✅ Already up to date, nothing to sync."
+            exit 0
+          fi
+
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "📦 Behind upstream by $BEHIND commits, syncing..."
+
+          # 用 fast-forward merge 保持历史干净
+          # 如果 main 没有自己的提交，ff 就够了
+          # 如果有冲突就用 merge
+          if git merge --ff-only upstream/main 2>/dev/null; then
+            echo "✅ Fast-forward merge succeeded."
+          else
+            echo "⚠️ Fast-forward not possible, attempting merge..."
+            git merge upstream/main --no-edit -m "chore: sync upstream openclaw/openclaw main"
+          fi
+
+          git push origin main
+          echo "🎉 Synced $BEHIND commits from upstream."
